@@ -31,18 +31,15 @@ import { it } from "./effect"
 const opencodeRoot = path.resolve(import.meta.dir, "../../")
 const cliEntry = path.join(opencodeRoot, "src/index.ts")
 
-// Opt-in pre-built binary path. If set, subprocess tests spawn the binary
-// directly instead of `bun run src/index.ts`, skipping JIT + plugin init
-// (~3x speedup on isolation-env spawns that hit DB migration). Produced by
-// `bun script/prebuild-test-cli.ts`; the harness silently falls back to dev
-// mode if the var is unset, so this is strictly opt-in.
+// Argv prefix for spawning the CLI. If OPENCODE_TEST_CLI_PATH is set,
+// subprocess tests spawn the pre-built binary directly (~3x speedup on
+// isolation-env spawns that hit DB migration; produced by
+// `bun script/prebuild-test-cli.ts`). Otherwise falls back to dev mode —
+// strictly opt-in, default behavior unchanged.
 const prebuiltCli = process.env["OPENCODE_TEST_CLI_PATH"]
-
-// Argv prefix for spawning the CLI. Either the pre-built binary (single
-// argument) or `bun run --conditions=browser src/index.ts` (four arguments).
-function cliArgv(): string[] {
-  return prebuiltCli ? [prebuiltCli] : ["bun", "run", "--conditions=browser", cliEntry]
-}
+const cliArgv: readonly string[] = prebuiltCli
+  ? [prebuiltCli]
+  : ["bun", "run", "--conditions=browser", cliEntry]
 
 export const testModelID = "test/test-model"
 
@@ -209,7 +206,7 @@ export function withCliFixture<A, E>(
       Effect.promise(async () => {
         const start = Date.now()
         // Process.run pipes stdout/stderr by default and returns them as Buffers.
-        const result = await Process.run([...cliArgv(), ...args], {
+        const result = await Process.run([...cliArgv, ...args], {
           cwd: home,
           timeout: opts?.timeoutMs ?? 30_000,
           env: { ...process.env, ...env, ...opts?.env },
@@ -248,7 +245,7 @@ export function withCliFixture<A, E>(
       // as a finalizer error during test teardown.
       const proc = yield* Effect.acquireRelease(
         Effect.sync(() =>
-          Bun.spawn([...cliArgv(), ...argv], {
+          Bun.spawn([...cliArgv, ...argv], {
             cwd: home,
             env: { ...process.env, ...env, ...opts?.env },
             stdout: "pipe",
@@ -319,7 +316,7 @@ export function withCliFixture<A, E>(
       // Either way we await proc.exited so the test scope doesn't leak.
       const proc = yield* Effect.acquireRelease(
         Effect.sync(() =>
-          Bun.spawn([...cliArgv(), ...argv], {
+          Bun.spawn([...cliArgv, ...argv], {
             cwd: opts?.cwd ?? home,
             env: { ...process.env, ...env, ...opts?.env },
             stdin: "pipe",

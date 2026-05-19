@@ -126,7 +126,9 @@ describe("opencode CLI help-text snapshots", () => {
           expect(normalize(result.stderr)).toMatchSnapshot(`opencode ${argv.join(" ")} --help`)
         }
         if (failures.length > 0) {
-          throw new Error(`Help text failed for:\n  ${failures.join("\n  ")}`)
+          // Keep the failure in the Effect channel — symmetric with the
+          // Effect.fail inside the partition above, not a defect.
+          yield* Effect.fail(new Error(`Help text failed for:\n  ${failures.join("\n  ")}`))
         }
       }),
     180_000,

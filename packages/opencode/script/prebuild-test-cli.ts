@@ -32,16 +32,58 @@ const arch = process.arch === "x64" ? "x64" : process.arch === "arm64" ? "arm64"
 const targetDir = path.join(dir, "dist", `opencode-${platform}-${arch}`)
 const binaryName = process.platform === "win32" ? "opencode.exe" : "opencode"
 const builtBinary = path.join(targetDir, "bin", binaryName)
-
-// Stable path the harness reads via OPENCODE_TEST_CLI_PATH. Symlinked so
-// the binary itself remains the platform-specific one (build.ts manages it).
 const stableBinary = path.join(dir, "dist", "test-cli", "bin", binaryName)
 
-console.log(`Building test CLI binary for ${platform}-${arch}...`)
-const start = Date.now()
-await $`bun script/build.ts --single --skip-embed-web-ui --skip-install`
-const buildMs = Date.now() - start
-console.log(`Build complete in ${buildMs}ms: ${builtBinary}`)
+const force = process.argv.includes("--force")
+
+// Walk src/ and return the newest mtime seen. Faster than `git status` for
+// the freshness check and works for uncommitted edits. Returns 0 on error
+// so a missing src/ tree forces a rebuild via the comparison below.
+async function newestMtimeMs(root: string): Promise<number> {
+  let max = 0
+  async function walk(p: string) {
+    let entries: { name: string; isDirectory: () => boolean; isFile: () => boolean }[]
+    try {
+      entries = await fs.readdir(p, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(p, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === "dist") continue
+        await walk(full)
+      } else if (entry.isFile()) {
+        const stat = await fs.stat(full).catch(() => null)
+        if (stat && stat.mtimeMs > max) max = stat.mtimeMs
+      }
+    }
+  }
+  await walk(root)
+  return max
+}
+
+async function fresh(): Promise<boolean> {
+  const binStat = await fs.stat(builtBinary).catch(() => null)
+  if (!binStat) return false
+  const srcMs = await newestMtimeMs(path.join(dir, "src"))
+  return binStat.mtimeMs > srcMs
+}
+
+if (!force && (await fresh())) {
+  console.log(`Test CLI binary is up to date: ${builtBinary}`)
+} else {
+  console.log(`Building test CLI binary for ${platform}-${arch}...`)
+  const start = Date.now()
+  await $`bun script/build.ts --single --skip-embed-web-ui --skip-install`
+  console.log(`Build complete in ${Date.now() - start}ms: ${builtBinary}`)
+}
+
+// Verify the binary exists and is executable before symlinking — catches
+// a silently-failed build that left a stale or partial output behind.
+await fs.access(builtBinary, fs.constants.X_OK).catch(() => {
+  throw new Error(`Built binary missing or not executable: ${builtBinary}`)
+})
 
 await fs.mkdir(path.dirname(stableBinary), { recursive: true })
 await fs.rm(stableBinary, { force: true })
